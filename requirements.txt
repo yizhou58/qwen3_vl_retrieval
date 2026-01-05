@@ -1,0 +1,37 @@
+# Core dependencies for Qwen3-VL RAG Retrieval System
+# Requirements: 8.1, 8.2
+
+# PyTorch and Transformers ecosystem
+torch>=2.1.0
+transformers>=4.45.0
+accelerate>=0.25.0
+peft>=0.7.0
+
+# Image processing
+pillow>=10.0.0
+
+# Numerical computing
+numpy>=1.24.0
+
+# Model serialization
+safetensors>=0.4.0
+
+# Embedding storage
+lmdb>=1.4.0
+
+# First-stage retrieval
+rank-bm25>=0.2.2
+sentence-transformers>=2.2.0
+
+# Utilities
+tqdm>=4.65.0
+pyyaml>=6.0
+einops>=0.7.0
+
+# Optional: Flash Attention 2 for faster inference (Requirements: 8.5)
+# flash-attn>=2.5.0  # Uncomment if CUDA is available
+
+# Development dependencies
+pytest>=7.0.0
+pytest-cov>=4.0.0
+hypothesis>=6.0.0
