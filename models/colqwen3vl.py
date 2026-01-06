@@ -128,6 +128,7 @@ class ColQwen3VL(nn.Module):
             torch_dtype: Data type for model weights
             device_map: Device mapping for model parallelism
             attn_implementation: Attention implementation ("flash_attention_2", "sdpa", "eager")
+            quantization_config: BitsAndBytesConfig for QLoRA (4-bit quantization)
             **kwargs: Additional arguments passed to from_pretrained
             
         Returns:
@@ -142,13 +143,22 @@ class ColQwen3VL(nn.Module):
         # Load the base model
         logger.info(f"Loading Qwen3-VL model from {pretrained_model_name_or_path}")
         
+        # Extract quantization_config from kwargs
+        quantization_config = kwargs.pop("quantization_config", None)
+        
         load_kwargs = {}
         if torch_dtype is not None:
             load_kwargs["torch_dtype"] = torch_dtype
         if device_map is not None:
             load_kwargs["device_map"] = device_map
+        elif quantization_config is not None:
+            # QLoRA requires device_map for proper loading
+            load_kwargs["device_map"] = "auto"
         if attn_implementation is not None:
             load_kwargs["attn_implementation"] = attn_implementation
+        if quantization_config is not None:
+            load_kwargs["quantization_config"] = quantization_config
+            logger.info("Loading model with 4-bit quantization (QLoRA)")
         load_kwargs.update(kwargs)
         
         base_model = Qwen3VLForConditionalGeneration.from_pretrained(

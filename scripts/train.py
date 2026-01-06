@@ -84,6 +84,12 @@ def parse_args():
     parser.add_argument("--lora_rank", type=int, default=32)
     parser.add_argument("--lora_alpha", type=int, default=32)
     
+    # QLoRA (4-bit quantization) arguments
+    parser.add_argument("--use_qlora", action="store_true", default=False,
+                        help="Use QLoRA (4-bit quantization) for memory-efficient training")
+    parser.add_argument("--bnb_4bit_compute_dtype", type=str, default="bfloat16",
+                        help="Compute dtype for 4-bit quantization (bfloat16 or float16)")
+    
     # Loss arguments
     parser.add_argument("--temperature", type=float, default=0.02)
     
@@ -134,10 +140,29 @@ def main():
     logger.info(f"Loading model from {args.model_path}")
     model_path = str(Path(args.model_path).expanduser())
     
+    # Prepare quantization config for QLoRA
+    quantization_config = None
+    if args.use_qlora:
+        try:
+            from transformers import BitsAndBytesConfig
+            compute_dtype = torch.bfloat16 if args.bnb_4bit_compute_dtype == "bfloat16" else torch.float16
+            quantization_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=compute_dtype,
+                bnb_4bit_use_double_quant=True,
+            )
+            logger.info(f"Using QLoRA with 4-bit quantization, compute_dtype={args.bnb_4bit_compute_dtype}")
+        except ImportError:
+            logger.warning("bitsandbytes not installed, falling back to standard LoRA")
+            logger.warning("Install with: pip install bitsandbytes")
+            args.use_qlora = False
+    
     model = ColQwen3VL.from_pretrained(
         model_path,
         torch_dtype=torch.bfloat16 if args.bf16 else torch.float32,
         attn_implementation="eager" if args.no_flash_attention else ("flash_attention_2" if args.use_flash_attention else "eager"),
+        quantization_config=quantization_config,
     )
     
     # Enable LoRA training
