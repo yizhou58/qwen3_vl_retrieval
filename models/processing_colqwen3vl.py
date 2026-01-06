@@ -16,13 +16,31 @@ import torch
 from PIL import Image
 from transformers import BatchEncoding, BatchFeature
 
+# Try multiple import paths for Qwen3-VL processor
+Qwen3VLProcessor = None
+smart_resize = None
+
 try:
-    from transformers.models.qwen3_vl import Qwen3VLProcessor
+    from transformers import Qwen3VLProcessor
     from transformers.models.qwen3_vl.image_processing_qwen3_vl import smart_resize
 except ImportError:
-    # Fallback for older transformers versions
-    Qwen3VLProcessor = None
-    smart_resize = None
+    pass
+
+if Qwen3VLProcessor is None:
+    try:
+        from transformers.models.qwen3_vl import Qwen3VLProcessor
+        from transformers.models.qwen3_vl.image_processing_qwen3_vl import smart_resize
+    except ImportError:
+        pass
+
+if Qwen3VLProcessor is None:
+    try:
+        # Try AutoProcessor as fallback
+        from transformers import AutoProcessor
+        # Will use AutoProcessor.from_pretrained() instead
+        Qwen3VLProcessor = AutoProcessor
+    except ImportError:
+        pass
 
 logger = logging.getLogger(__name__)
 

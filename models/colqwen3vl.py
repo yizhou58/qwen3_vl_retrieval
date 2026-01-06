@@ -16,12 +16,29 @@ import logging
 import torch
 from torch import nn
 
+# Try multiple import paths for Qwen3-VL
+Qwen3VLConfig = None
+Qwen3VLForConditionalGeneration = None
+
 try:
-    from transformers.models.qwen3_vl import Qwen3VLConfig, Qwen3VLModel
+    from transformers import Qwen3VLConfig, Qwen3VLForConditionalGeneration
 except ImportError:
-    # Fallback for older transformers versions
-    Qwen3VLConfig = None
-    Qwen3VLModel = None
+    pass
+
+if Qwen3VLForConditionalGeneration is None:
+    try:
+        from transformers.models.qwen3_vl import Qwen3VLConfig, Qwen3VLForConditionalGeneration
+    except ImportError:
+        pass
+
+if Qwen3VLForConditionalGeneration is None:
+    try:
+        # Try AutoModel as fallback
+        from transformers import AutoModelForVision2Seq, AutoConfig
+        Qwen3VLForConditionalGeneration = AutoModelForVision2Seq
+        Qwen3VLConfig = AutoConfig
+    except ImportError:
+        pass
 
 # Use standard logging to avoid circular import issues
 logger = logging.getLogger(__name__)
@@ -116,7 +133,7 @@ class ColQwen3VL(nn.Module):
         Returns:
             Initialized ColQwen3VL model
         """
-        if Qwen3VLModel is None:
+        if Qwen3VLForConditionalGeneration is None:
             raise ImportError(
                 "Qwen3-VL model requires transformers >= 4.45.0. "
                 "Please upgrade: pip install transformers>=4.45.0"
@@ -134,7 +151,7 @@ class ColQwen3VL(nn.Module):
             load_kwargs["attn_implementation"] = attn_implementation
         load_kwargs.update(kwargs)
         
-        base_model = Qwen3VLModel.from_pretrained(
+        base_model = Qwen3VLForConditionalGeneration.from_pretrained(
             pretrained_model_name_or_path,
             **load_kwargs,
         )
