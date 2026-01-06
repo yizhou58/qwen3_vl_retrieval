@@ -90,7 +90,9 @@ def parse_args():
     # Memory optimization
     parser.add_argument("--gradient_checkpointing", action="store_true", default=True)
     parser.add_argument("--bf16", action="store_true", default=True)
-    parser.add_argument("--use_flash_attention", action="store_true", default=True)
+    parser.add_argument("--use_flash_attention", action="store_true", default=False)
+    parser.add_argument("--no_flash_attention", action="store_true", default=False,
+                        help="Disable flash attention (use eager attention instead)")
     
     # Logging
     parser.add_argument("--logging_steps", type=int, default=10)
@@ -133,7 +135,7 @@ def main():
     model = ColQwen3VL.from_pretrained(
         model_path,
         torch_dtype=torch.bfloat16 if args.bf16 else torch.float32,
-        attn_implementation="flash_attention_2" if args.use_flash_attention else "eager",
+        attn_implementation="eager" if args.no_flash_attention else ("flash_attention_2" if args.use_flash_attention else "eager"),
     )
     
     # Enable LoRA training
