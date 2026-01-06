@@ -84,6 +84,8 @@ class ColPaliEngineDataset(Dataset):
         max_samples: Optional[int] = None,
         hard_negatives_path: Optional[Union[str, Path]] = None,
         num_hard_negatives: int = 0,
+        preload_images: bool = False,
+        cache_images: bool = True,
     ):
         """
         Initialize ColPaliEngineDataset.
@@ -95,11 +97,17 @@ class ColPaliEngineDataset(Dataset):
             max_samples: Maximum number of samples to load
             hard_negatives_path: Path to hard negatives file
             num_hard_negatives: Number of hard negatives per sample
+            preload_images: Whether to preload all images into memory
+            cache_images: Whether to cache loaded images (LRU cache)
         """
         self.data_path = Path(data_path)
         self.image_dir = Path(image_dir) if image_dir else self.data_path.parent
         self.transform = transform
         self.num_hard_negatives = num_hard_negatives
+        self.cache_images = cache_images
+        
+        # Image cache (simple dict, could use LRU cache for large datasets)
+        self._image_cache: Dict[str, Image.Image] = {}
         
         # Load data
         self.samples = self._load_data(max_samples)
@@ -115,6 +123,10 @@ class ColPaliEngineDataset(Dataset):
         }
         
         logger.info(f"Loaded {len(self.samples)} samples from {data_path}")
+        
+        # Preload images if requested
+        if preload_images:
+            self._preload_images()
     
     def _load_data(self, max_samples: Optional[int] = None) -> List[Dict[str, Any]]:
         """
@@ -227,14 +239,9 @@ class ColPaliEngineDataset(Dataset):
         """
         sample = self.samples[idx]
         
-        # Load image
+        # Load image (with caching)
         image_path = sample["image_path"]
-        try:
-            image = Image.open(image_path).convert("RGB")
-        except Exception as e:
-            logger.warning(f"Failed to load image {image_path}: {e}")
-            # Return a placeholder image
-            image = Image.new("RGB", (224, 224), color="white")
+        image = self._load_image(image_path)
         
         # Apply transform if provided
         if self.transform:
@@ -250,6 +257,42 @@ class ColPaliEngineDataset(Dataset):
             positive_doc_id=doc_id,
             hard_negatives=hard_negatives,
         )
+    
+    def _load_image(self, image_path: str) -> Image.Image:
+        """
+        Load image with optional caching.
+        
+        Args:
+            image_path: Path to image file
+            
+        Returns:
+            PIL Image
+        """
+        # Check cache first
+        if self.cache_images and image_path in self._image_cache:
+            return self._image_cache[image_path].copy()
+        
+        try:
+            image = Image.open(image_path).convert("RGB")
+            
+            # Cache if enabled
+            if self.cache_images:
+                self._image_cache[image_path] = image.copy()
+            
+            return image
+        except Exception as e:
+            logger.warning(f"Failed to load image {image_path}: {e}")
+            # Return a placeholder image
+            return Image.new("RGB", (224, 224), color="white")
+    
+    def _preload_images(self) -> None:
+        """Preload all images into memory cache."""
+        logger.info(f"Preloading {len(self.samples)} images...")
+        for i, sample in enumerate(self.samples):
+            self._load_image(sample["image_path"])
+            if (i + 1) % 100 == 0:
+                logger.info(f"Preloaded {i + 1}/{len(self.samples)} images")
+        logger.info(f"Preloaded all {len(self.samples)} images")
     
     def get_sample_by_doc_id(self, doc_id: str) -> Optional[TrainingSample]:
         """

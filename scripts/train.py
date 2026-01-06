@@ -109,6 +109,8 @@ def parse_args():
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--max_pixels", type=int, default=512*512,
                         help="Maximum pixels per image (default: 262144 = 512x512)")
+    parser.add_argument("--preload_images", action="store_true", default=False,
+                        help="Preload all images into memory (faster but uses more RAM)")
     
     return parser.parse_args()
 
@@ -195,6 +197,7 @@ def main():
     train_dataset = ColPaliEngineDataset(
         data_path=args.data_path,
         image_dir=args.image_dir,
+        preload_images=args.preload_images,
     )
     
     eval_dataset = None
