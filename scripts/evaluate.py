@@ -206,6 +206,9 @@ class ViDoReDataset:
             image = item.get("image") or item.get("page_image")
             doc_id = item.get("doc_id") or item.get("docId") or f"doc_{idx}"
             
+            # Ensure doc_id is string
+            doc_id = str(doc_id)
+            
             # Handle relevance
             if query_id not in self.relevance:
                 self.relevance[query_id] = set()
@@ -371,6 +374,13 @@ class RetrievalEvaluator:
             lora_path=self.lora_path,
             device_map=self.device if self.device != "cpu" else None,
         )
+        
+        # Limit max pixels to avoid OOM and speed up processing
+        # Default: 512*512 = 262144 pixels max per image
+        if hasattr(self.processor, '_processor') and hasattr(self.processor._processor, 'image_processor'):
+            self.processor._processor.image_processor.max_pixels = 512 * 512
+            self.processor._processor.image_processor.min_pixels = 28 * 28 * 4
+            logger.info("Set max_pixels=262144 (512x512) for faster processing")
         
         logger.info("Model loaded successfully")
     

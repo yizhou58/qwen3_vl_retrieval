@@ -394,6 +394,7 @@ class EmbeddingStore:
                     continue
                 
                 # Process images
+                logger.debug(f"Processing batch {batch_start//batch_size + 1}: {len(images)} images")
                 batch_inputs = processor.process_images(images)
                 
                 # Move to device
@@ -403,6 +404,7 @@ class EmbeddingStore:
                 }
                 
                 # Encode
+                logger.debug(f"Encoding batch with input shape: {batch_inputs.get('input_ids', torch.tensor([])).shape}")
                 embeddings = model(**batch_inputs)  # (batch, seq_len, dim)
                 
                 # Store each document's embeddings
