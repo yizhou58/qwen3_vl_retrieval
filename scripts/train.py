@@ -158,10 +158,20 @@ def main():
             logger.warning("Install with: pip install bitsandbytes")
             args.use_qlora = False
     
+    # Determine attention implementation
+    if args.no_flash_attention:
+        attn_impl = "eager"
+    elif args.use_flash_attention:
+        attn_impl = "flash_attention_2"
+    else:
+        attn_impl = "sdpa"  # Default to SDPA (PyTorch native, faster than eager)
+    
+    logger.info(f"Using attention implementation: {attn_impl}")
+    
     model = ColQwen3VL.from_pretrained(
         model_path,
         torch_dtype=torch.bfloat16 if args.bf16 else torch.float32,
-        attn_implementation="eager" if args.no_flash_attention else ("flash_attention_2" if args.use_flash_attention else "eager"),
+        attn_implementation=attn_impl,
         quantization_config=quantization_config,
     )
     
