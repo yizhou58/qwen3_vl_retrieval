@@ -94,7 +94,10 @@ def parse_args():
     parser.add_argument("--temperature", type=float, default=0.02)
     
     # Memory optimization
-    parser.add_argument("--gradient_checkpointing", action="store_true", default=True)
+    parser.add_argument("--gradient_checkpointing", action="store_true", default=False,
+                        help="Enable gradient checkpointing (slower but saves memory)")
+    parser.add_argument("--no_gradient_checkpointing", action="store_true", default=False,
+                        help="Explicitly disable gradient checkpointing")
     parser.add_argument("--bf16", action="store_true", default=True)
     parser.add_argument("--use_flash_attention", action="store_true", default=False)
     parser.add_argument("--no_flash_attention", action="store_true", default=False,
