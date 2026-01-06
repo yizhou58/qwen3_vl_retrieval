@@ -135,7 +135,11 @@ class EmbeddingStore:
             raise ValueError(f"Expected dim={self.dim}, got {emb_dim}")
         
         # Convert to numpy for storage
-        float_data = embeddings.detach().cpu().numpy().astype(np.float32)
+        # Note: bfloat16 is not supported by numpy, so convert to float32 first
+        emb_cpu = embeddings.detach().cpu()
+        if emb_cpu.dtype == torch.bfloat16:
+            emb_cpu = emb_cpu.float()  # Convert bfloat16 to float32
+        float_data = emb_cpu.numpy().astype(np.float32)
         
         # Prepare metadata
         meta = {
