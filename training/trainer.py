@@ -88,13 +88,35 @@ class ColQwen3VLTrainer(Trainer):
     
     def save_model(self, output_dir: Optional[str] = None, _internal_call: bool = False):
         """Save model, handling LoRA adapters separately."""
+        import os
         output_dir = output_dir or self.args.output_dir
+        os.makedirs(output_dir, exist_ok=True)
         
-        if hasattr(self.model, 'save_pretrained'):
-            self.model.save_pretrained(output_dir)
+        # For PEFT models with LoRA, save adapters properly
+        if hasattr(self.model, 'model') and hasattr(self.model.model, 'save_pretrained'):
+            # Save LoRA adapters
+            self.model.model.save_pretrained(output_dir)
             logger.info(f"Saved LoRA adapters to {output_dir}")
+            
+            # Save projection layer separately
+            proj_path = os.path.join(output_dir, "custom_text_proj.pt")
+            torch.save(self.model.custom_text_proj.state_dict(), proj_path)
+            logger.info(f"Saved projection layer to {proj_path}")
+        elif hasattr(self.model, 'save_pretrained'):
+            try:
+                self.model.save_pretrained(output_dir)
+                logger.info(f"Saved model to {output_dir}")
+            except RuntimeError as e:
+                if "share memory" in str(e):
+                    # Handle shared tensors by saving state dict instead
+                    torch.save(self.model.state_dict(), os.path.join(output_dir, "model.pt"))
+                    logger.info(f"Saved model state dict to {output_dir}")
+                else:
+                    raise
         else:
-            super().save_model(output_dir, _internal_call)
+            # Fallback: save state dict
+            torch.save(self.model.state_dict(), os.path.join(output_dir, "model.pt"))
+            logger.info(f"Saved model state dict to {output_dir}")
         
         if self.processor is not None and hasattr(self.processor, '_processor'):
             self.processor._processor.save_pretrained(output_dir)
