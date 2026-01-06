@@ -136,6 +136,10 @@ class SecondStageReranker:
             3.2: Take maximum similarity for each query token
             3.3: Sum maximum similarities across all query tokens
         """
+        # Ensure same dtype (convert to float32 for consistency)
+        query_embeddings = query_embeddings.float()
+        doc_embeddings = doc_embeddings.float()
+        
         # Compute dot products: (num_query_tokens, num_doc_tokens)
         similarities = torch.matmul(query_embeddings, doc_embeddings.T)
         
