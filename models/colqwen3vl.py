@@ -250,7 +250,14 @@ class ColQwen3VL(nn.Module):
         )
         
         # Get last hidden states
-        hidden_states = outputs.last_hidden_state  # (batch_size, seq_len, hidden_size)
+        # For Qwen3VLForConditionalGeneration, hidden_states is a tuple
+        # The last element is the final layer's hidden states
+        if hasattr(outputs, 'last_hidden_state'):
+            hidden_states = outputs.last_hidden_state
+        elif hasattr(outputs, 'hidden_states') and outputs.hidden_states is not None:
+            hidden_states = outputs.hidden_states[-1]  # Last layer
+        else:
+            raise ValueError("Cannot extract hidden states from model output")
         
         # Apply projection layer
         proj = self.custom_text_proj(hidden_states)  # (batch_size, seq_len, dim)

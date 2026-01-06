@@ -101,6 +101,8 @@ def parse_args():
     # Other
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num_workers", type=int, default=4)
+    parser.add_argument("--max_pixels", type=int, default=512*512,
+                        help="Maximum pixels per image (default: 262144 = 512x512)")
     
     return parser.parse_args()
 
@@ -147,8 +149,11 @@ def main():
     if args.gradient_checkpointing:
         model.gradient_checkpointing_enable()
     
-    # Load processor
-    processor = ColQwen3VLProcessor.from_pretrained(model_path)
+    # Load processor with max_pixels limit to control memory
+    processor = ColQwen3VLProcessor.from_pretrained(
+        model_path,
+        max_pixels=args.max_pixels,
+    )
     
     # Load dataset
     logger.info(f"Loading dataset from {args.data_path}")

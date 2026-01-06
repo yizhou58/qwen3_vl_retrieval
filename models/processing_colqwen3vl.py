@@ -265,6 +265,7 @@ class ColQwen3VLProcessor(BaseVisualRetrieverProcessor):
         cls,
         pretrained_model_name_or_path: str,
         max_num_visual_tokens: Optional[int] = None,
+        max_pixels: Optional[int] = None,
         **kwargs,
     ) -> "ColQwen3VLProcessor":
         """
@@ -273,6 +274,7 @@ class ColQwen3VLProcessor(BaseVisualRetrieverProcessor):
         Args:
             pretrained_model_name_or_path: Path to pretrained processor
             max_num_visual_tokens: Maximum number of visual tokens per image
+            max_pixels: Maximum pixels per image (e.g., 512*512=262144)
             **kwargs: Additional arguments passed to from_pretrained
             
         Returns:
@@ -292,6 +294,12 @@ class ColQwen3VLProcessor(BaseVisualRetrieverProcessor):
         )
         
         instance = cls(processor=processor, max_num_visual_tokens=max_num_visual_tokens)
+        
+        # Configure max pixels to limit memory usage
+        if max_pixels is not None and hasattr(instance._processor, "image_processor"):
+            instance._processor.image_processor.max_pixels = max_pixels
+            instance._processor.image_processor.min_pixels = min(max_pixels // 4, 28*28*4)
+            logger.info(f"Set max_pixels={max_pixels} for image processor")
         
         # Configure max pixels if max_num_visual_tokens is specified
         if max_num_visual_tokens is not None:
