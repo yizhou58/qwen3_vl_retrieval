@@ -446,3 +446,105 @@ class ViDoReDataset(ColPaliEngineDataset):
                 break
         
         return samples
+
+
+
+class PreprocessedDataset(Dataset):
+    """
+    Dataset that loads pre-processed tensors from disk.
+    
+    This eliminates the CPU bottleneck during training by loading
+    pre-computed tensors instead of processing images on-the-fly.
+    """
+    
+    def __init__(
+        self,
+        preprocessed_dir: Union[str, Path],
+        max_samples: Optional[int] = None,
+    ):
+        """
+        Initialize PreprocessedDataset.
+        
+        Args:
+            preprocessed_dir: Directory containing preprocessed data
+            max_samples: Maximum number of samples to load
+        """
+        self.preprocessed_dir = Path(preprocessed_dir)
+        
+        # Load index
+        index_path = self.preprocessed_dir / "index.json"
+        with open(index_path, "r", encoding="utf-8") as f:
+            self.samples = json.load(f)
+        
+        if max_samples:
+            self.samples = self.samples[:max_samples]
+        
+        logger.info(f"Loaded {len(self.samples)} preprocessed samples")
+    
+    def __len__(self) -> int:
+        return len(self.samples)
+    
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        """
+        Load preprocessed tensors for a sample.
+        
+        Returns:
+            Dictionary with all tensors ready for training
+        """
+        sample = self.samples[idx]
+        sample_dir = Path(sample["sample_dir"])
+        
+        return {
+            "query_input_ids": torch.load(sample_dir / "query_input_ids.pt").squeeze(0),
+            "query_attention_mask": torch.load(sample_dir / "query_attention_mask.pt").squeeze(0),
+            "doc_input_ids": torch.load(sample_dir / "doc_input_ids.pt").squeeze(0),
+            "doc_attention_mask": torch.load(sample_dir / "doc_attention_mask.pt").squeeze(0),
+            "doc_pixel_values": torch.load(sample_dir / "doc_pixel_values.pt").squeeze(0),
+            "doc_image_grid_thw": torch.load(sample_dir / "doc_image_grid_thw.pt").squeeze(0),
+        }
+
+
+class PreprocessedCollator:
+    """
+    Collator for preprocessed data.
+    
+    Simply pads tensors to the same length within a batch.
+    """
+    
+    def __call__(self, batch: List[Dict[str, torch.Tensor]]) -> Dict[str, torch.Tensor]:
+        """Collate preprocessed samples into a batch."""
+        
+        # Pad each tensor type
+        query_input_ids = torch.nn.utils.rnn.pad_sequence(
+            [s["query_input_ids"] for s in batch], batch_first=True, padding_value=0
+        )
+        query_attention_mask = torch.nn.utils.rnn.pad_sequence(
+            [s["query_attention_mask"] for s in batch], batch_first=True, padding_value=0
+        )
+        doc_input_ids = torch.nn.utils.rnn.pad_sequence(
+            [s["doc_input_ids"] for s in batch], batch_first=True, padding_value=0
+        )
+        doc_attention_mask = torch.nn.utils.rnn.pad_sequence(
+            [s["doc_attention_mask"] for s in batch], batch_first=True, padding_value=0
+        )
+        
+        # Pixel values need special handling (variable length)
+        max_patches = max(s["doc_pixel_values"].shape[0] for s in batch)
+        patch_dim = batch[0]["doc_pixel_values"].shape[-1]
+        
+        doc_pixel_values = torch.zeros(len(batch), max_patches, patch_dim)
+        for i, s in enumerate(batch):
+            n_patches = s["doc_pixel_values"].shape[0]
+            doc_pixel_values[i, :n_patches] = s["doc_pixel_values"]
+        
+        # Stack image_grid_thw
+        doc_image_grid_thw = torch.stack([s["doc_image_grid_thw"] for s in batch])
+        
+        return {
+            "query_input_ids": query_input_ids,
+            "query_attention_mask": query_attention_mask,
+            "doc_input_ids": doc_input_ids,
+            "doc_attention_mask": doc_attention_mask,
+            "doc_pixel_values": doc_pixel_values,
+            "doc_image_grid_thw": doc_image_grid_thw,
+        }

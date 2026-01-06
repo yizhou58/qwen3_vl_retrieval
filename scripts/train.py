@@ -111,6 +111,8 @@ def parse_args():
                         help="Maximum pixels per image (default: 262144 = 512x512)")
     parser.add_argument("--preload_images", action="store_true", default=False,
                         help="Preload all images into memory (faster but uses more RAM)")
+    parser.add_argument("--use_preprocessed", action="store_true", default=False,
+                        help="Use preprocessed data (much faster training)")
     
     return parser.parse_args()
 
@@ -194,21 +196,33 @@ def main():
     
     # Load dataset
     logger.info(f"Loading dataset from {args.data_path}")
-    train_dataset = ColPaliEngineDataset(
-        data_path=args.data_path,
-        image_dir=args.image_dir,
-        preload_images=args.preload_images,
-    )
+    
+    if args.use_preprocessed:
+        from qwen3_vl_retrieval.data.dataset import PreprocessedDataset, PreprocessedCollator
+        train_dataset = PreprocessedDataset(
+            preprocessed_dir=args.data_path,
+        )
+        collator = PreprocessedCollator()
+    else:
+        train_dataset = ColPaliEngineDataset(
+            data_path=args.data_path,
+            image_dir=args.image_dir,
+            preload_images=args.preload_images,
+        )
+        # Create collator
+        collator = VisualRetrieverCollator(processor=processor)
     
     eval_dataset = None
     if args.eval_data_path:
-        eval_dataset = ColPaliEngineDataset(
-            data_path=args.eval_data_path,
-            image_dir=args.image_dir,
-        )
-    
-    # Create collator
-    collator = VisualRetrieverCollator(processor=processor)
+        if args.use_preprocessed:
+            eval_dataset = PreprocessedDataset(
+                preprocessed_dir=args.eval_data_path,
+            )
+        else:
+            eval_dataset = ColPaliEngineDataset(
+                data_path=args.eval_data_path,
+                image_dir=args.image_dir,
+            )
     
     # Create config
     config = ColModelTrainingConfig(

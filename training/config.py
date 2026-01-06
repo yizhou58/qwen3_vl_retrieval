@@ -101,4 +101,7 @@ class ColModelTrainingConfig:
             "lr_scheduler_type": self.lr_scheduler_type,
             "seed": self.seed,
             "remove_unused_columns": False,
+            "dataloader_num_workers": self.dataloader_num_workers,
+            "dataloader_pin_memory": True,
+            "dataloader_prefetch_factor": 2,
         }
