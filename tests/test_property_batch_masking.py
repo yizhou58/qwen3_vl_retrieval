@@ -160,13 +160,16 @@ class TestProperty12BatchMaskingCorrectness:
             
             # Add HIGH VALUE padding (would increase score if not masked)
             # Create padding that would have high similarity with query
-            high_value_padding = query_emb[:num_padding].clone() if num_padding <= query_emb.shape[0] else query_emb.repeat(2, 1)[:num_padding]
+            # Ensure we create exactly num_padding tokens by repeating enough times
+            repeat_times = (num_padding // query_emb.shape[0]) + 1
+            high_value_padding = query_emb.repeat(repeat_times, 1)[:num_padding]
             padded_doc_emb = torch.cat([doc_emb, high_value_padding], dim=0)
             
-            # Create mask
+            # Create mask - must match actual padding size
+            actual_padding_size = high_value_padding.shape[0]
             mask = torch.cat([
                 torch.ones(doc_emb.shape[0], dtype=torch.bool),
-                torch.zeros(num_padding, dtype=torch.bool)
+                torch.zeros(actual_padding_size, dtype=torch.bool)
             ])
             
             # Compute with mask
