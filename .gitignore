@@ -77,8 +77,7 @@ outputs/
 *.bin
 *.safetensors
 
-# Data files
-data/
+# Data files (large data
 *.json
 !pyproject.toml
 
