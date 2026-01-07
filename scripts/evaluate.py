@@ -319,6 +319,7 @@ class RetrievalEvaluator:
         second_stage_top_k: int = 10,
         binary_rescore_ratio: int = 10,
         skip_first_stage: bool = False,
+        cache_dir: Optional[str] = None,
     ):
         """
         Initialize evaluator.
@@ -332,6 +333,7 @@ class RetrievalEvaluator:
             second_stage_top_k: Number of final results
             binary_rescore_ratio: Ratio for binary pre-filtering
             skip_first_stage: Skip first stage and use all docs for MaxSim
+            cache_dir: Directory to cache embeddings (if None, use temp dir)
         """
         self.model_path = model_path
         self.lora_path = lora_path
@@ -340,6 +342,7 @@ class RetrievalEvaluator:
         self.second_stage_top_k = second_stage_top_k
         self.binary_rescore_ratio = binary_rescore_ratio
         self.skip_first_stage = skip_first_stage
+        self.cache_dir = cache_dir
         
         # Determine device
         if device:
@@ -515,6 +518,7 @@ class RetrievalEvaluator:
             EvaluationResult with metrics and latency stats
         """
         import tempfile
+        from contextlib import nullcontext
         from qwen3_vl_retrieval.evaluation.metrics import RetrievalMetrics
         
         recall_k_values = recall_k_values or [1, 5, 10, 20, 50, 100]
@@ -523,13 +527,35 @@ class RetrievalEvaluator:
         # Load model
         self._load_model()
         
-        # Create temporary directory for index
-        with tempfile.TemporaryDirectory() as temp_dir:
+        # Determine cache directory
+        if self.cache_dir:
+            # Use persistent cache directory
+            dataset_name = dataset.dataset_name or "custom"
+            safe_name = dataset_name.replace("/", "_")
+            cache_path = Path(self.cache_dir) / "embedding_cache" / safe_name
+            cache_path.mkdir(parents=True, exist_ok=True)
+            work_dir = str(cache_path)
+            context_manager = nullcontext(work_dir)
+            logger.info(f"Using embedding cache at: {cache_path}")
+        else:
+            # Use temporary directory
+            context_manager = tempfile.TemporaryDirectory()
+        
+        with context_manager as work_dir:
             # Setup retrieval system
-            self._setup_retrieval_system(temp_dir)
+            self._setup_retrieval_system(work_dir)
             
-            # Index documents
-            self._index_documents(dataset, batch_size)
+            # Check if embeddings are already cached
+            cached_doc_ids = self.embedding_store.list_doc_ids()
+            if cached_doc_ids and set(cached_doc_ids) >= set(dataset.doc_ids):
+                logger.info(f"Found cached embeddings for {len(cached_doc_ids)} documents, skipping encoding")
+                # Just refresh the first stage cache
+                self.first_stage.doc_ids = list(cached_doc_ids)
+                self.first_stage._refresh_cache()
+                self._encoding_latencies.append(0.0)
+            else:
+                # Index documents (encode embeddings)
+                self._index_documents(dataset, batch_size)
             
             # Get all doc_ids for skip_first_stage mode
             all_doc_ids = dataset.doc_ids
@@ -1196,6 +1222,19 @@ Examples:
         help="Skip first stage and use all documents for MaxSim ranking (slower but more accurate)"
     )
     
+    # Cache arguments
+    parser.add_argument(
+        "--cache_dir",
+        type=str,
+        default="/root/autodl-tmp",
+        help="Directory to cache embeddings (default: /root/autodl-tmp)"
+    )
+    parser.add_argument(
+        "--no_cache",
+        action="store_true",
+        help="Disable embedding cache (use temporary directory)"
+    )
+    
     # Output arguments
     parser.add_argument(
         "--output_dir",
@@ -1298,6 +1337,9 @@ def main():
             max_samples=args.max_samples,
         )
         
+        # Determine cache directory
+        cache_dir = None if args.no_cache else args.cache_dir
+        
         # Create evaluator
         evaluator = RetrievalEvaluator(
             model_path=args.model_path,
@@ -1307,6 +1349,7 @@ def main():
             first_stage_top_k=args.first_stage_top_k,
             second_stage_top_k=args.second_stage_top_k,
             skip_first_stage=args.skip_first_stage,
+            cache_dir=cache_dir,
         )
         
         # Run evaluation

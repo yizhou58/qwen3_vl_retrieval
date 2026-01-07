@@ -92,31 +92,52 @@ class ColQwen3VLTrainer(Trainer):
         output_dir = output_dir or self.args.output_dir
         os.makedirs(output_dir, exist_ok=True)
         
-        # For PEFT models with LoRA, save adapters properly
-        if hasattr(self.model, 'model') and hasattr(self.model.model, 'save_pretrained'):
-            # Save LoRA adapters
-            self.model.model.save_pretrained(output_dir)
-            logger.info(f"Saved LoRA adapters to {output_dir}")
-            
-            # Save projection layer separately
-            proj_path = os.path.join(output_dir, "custom_text_proj.pt")
-            torch.save(self.model.custom_text_proj.state_dict(), proj_path)
-            logger.info(f"Saved projection layer to {proj_path}")
-        elif hasattr(self.model, 'save_pretrained'):
+        try:
+            # For PEFT models with LoRA, save adapters properly
+            if hasattr(self.model, 'model') and hasattr(self.model.model, 'save_pretrained'):
+                # Save LoRA adapters
+                self.model.model.save_pretrained(output_dir)
+                logger.info(f"Saved LoRA adapters to {output_dir}")
+                
+                # Save projection layer separately
+                proj_path = os.path.join(output_dir, "custom_text_proj.pt")
+                torch.save(self.model.custom_text_proj.state_dict(), proj_path)
+                logger.info(f"Saved projection layer to {proj_path}")
+            elif hasattr(self.model, 'save_pretrained'):
+                try:
+                    self.model.save_pretrained(output_dir)
+                    logger.info(f"Saved model to {output_dir}")
+                except RuntimeError as e:
+                    if "share memory" in str(e):
+                        # Handle shared tensors by saving state dict instead
+                        torch.save(self.model.state_dict(), os.path.join(output_dir, "model.pt"))
+                        logger.info(f"Saved model state dict to {output_dir}")
+                    else:
+                        raise
+            else:
+                # Fallback: save state dict
+                torch.save(self.model.state_dict(), os.path.join(output_dir, "model.pt"))
+                logger.info(f"Saved model state dict to {output_dir}")
+        except Exception as e:
+            logger.warning(f"Primary save failed: {e}, trying fallback...")
+            # Ultimate fallback: save entire model state dict
             try:
-                self.model.save_pretrained(output_dir)
-                logger.info(f"Saved model to {output_dir}")
-            except RuntimeError as e:
-                if "share memory" in str(e):
-                    # Handle shared tensors by saving state dict instead
-                    torch.save(self.model.state_dict(), os.path.join(output_dir, "model.pt"))
-                    logger.info(f"Saved model state dict to {output_dir}")
-                else:
-                    raise
-        else:
-            # Fallback: save state dict
-            torch.save(self.model.state_dict(), os.path.join(output_dir, "model.pt"))
-            logger.info(f"Saved model state dict to {output_dir}")
+                state_dict_path = os.path.join(output_dir, "model_state_dict.pt")
+                torch.save(self.model.state_dict(), state_dict_path)
+                logger.info(f"Saved model state dict (fallback) to {state_dict_path}")
+                
+                # Also save projection layer
+                if hasattr(self.model, 'custom_text_proj'):
+                    proj_path = os.path.join(output_dir, "custom_text_proj.pt")
+                    torch.save(self.model.custom_text_proj.state_dict(), proj_path)
+                    logger.info(f"Saved projection layer to {proj_path}")
+            except Exception as e2:
+                logger.error(f"Fallback save also failed: {e2}")
         
-        if self.processor is not None and hasattr(self.processor, '_processor'):
-            self.processor._processor.save_pretrained(output_dir)
+        # Save processor
+        try:
+            if self.processor is not None and hasattr(self.processor, '_processor'):
+                self.processor._processor.save_pretrained(output_dir)
+                logger.info(f"Saved processor to {output_dir}")
+        except Exception as e:
+            logger.warning(f"Failed to save processor: {e}")
