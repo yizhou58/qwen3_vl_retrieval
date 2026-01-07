@@ -144,6 +144,7 @@ class ViDoReDataset:
         self.images: List[Any] = []  # PIL Images or paths
         self.image_paths: List[str] = []
         self.relevance: Dict[str, Set[str]] = {}  # query_id -> set of relevant doc_ids
+        self.doc_texts: Dict[str, str] = {}  # doc_id -> text for BM25 indexing
         
         self._load_data()
     
@@ -214,6 +215,14 @@ class ViDoReDataset:
                 self.relevance[query_id] = set()
             self.relevance[query_id].add(doc_id)
             
+            # Store query text for this doc (for BM25 indexing)
+            # In ViDoRe, each query corresponds to a document, so we use query as doc text
+            if doc_id not in self.doc_texts:
+                self.doc_texts[doc_id] = query
+            else:
+                # Append if multiple queries for same doc
+                self.doc_texts[doc_id] += " " + query
+            
             # Store unique documents
             if doc_id not in seen_docs:
                 seen_docs.add(doc_id)
@@ -267,6 +276,12 @@ class ViDoReDataset:
             for rel_doc in relevant_docs:
                 self.relevance[query_id].add(rel_doc)
             
+            # Store query text for this doc (for BM25 indexing)
+            if doc_id not in self.doc_texts:
+                self.doc_texts[doc_id] = query
+            else:
+                self.doc_texts[doc_id] += " " + query
+            
             # Store unique documents
             if doc_id not in seen_docs:
                 seen_docs.add(doc_id)
@@ -318,6 +333,8 @@ class RetrievalEvaluator:
         first_stage_top_k: int = 100,
         second_stage_top_k: int = 10,
         binary_rescore_ratio: int = 10,
+        skip_first_stage: bool = False,
+        use_visual_first_stage: bool = False,
     ):
         """
         Initialize evaluator.
@@ -331,6 +348,8 @@ class RetrievalEvaluator:
             first_stage_top_k: Number of candidates from first stage
             second_stage_top_k: Number of final results
             binary_rescore_ratio: Ratio for binary pre-filtering
+            skip_first_stage: Skip BM25 first stage and use all docs for MaxSim
+            use_visual_first_stage: Use binary visual embeddings for first stage instead of BM25
         """
         self.model_path = model_path
         self.lora_path = lora_path
@@ -339,6 +358,8 @@ class RetrievalEvaluator:
         self.first_stage_top_k = first_stage_top_k
         self.second_stage_top_k = second_stage_top_k
         self.binary_rescore_ratio = binary_rescore_ratio
+        self.skip_first_stage = skip_first_stage
+        self.use_visual_first_stage = use_visual_first_stage
         
         # Determine device
         if device:
@@ -392,17 +413,27 @@ class RetrievalEvaluator:
         
         temp_path = Path(temp_dir)
         
-        # First-stage retriever
-        self.first_stage = FirstStageRetriever(
-            method=self.first_stage_method,
-            index_path=str(temp_path / "first_stage"),
-        )
-        
-        # Embedding store
+        # Embedding store (needed for both first and second stage when using visual)
         self.embedding_store = EmbeddingStore(
             storage_path=str(temp_path / "embeddings"),
             dim=128,
         )
+        
+        # First-stage retriever
+        if self.use_visual_first_stage:
+            from qwen3_vl_retrieval.retrieval.binary_first_stage import BinaryFirstStageRetriever
+            self.first_stage = BinaryFirstStageRetriever(
+                embedding_store=self.embedding_store,
+                index_path=str(temp_path / "binary_first_stage"),
+            )
+            self.binary_first_stage = self.first_stage
+            logger.info("Using binary visual embeddings for first stage retrieval")
+        else:
+            self.first_stage = FirstStageRetriever(
+                method=self.first_stage_method,
+                index_path=str(temp_path / "first_stage"),
+            )
+            self.binary_first_stage = None
         
         # Second-stage reranker
         self.second_stage = SecondStageReranker(
@@ -424,8 +455,14 @@ class RetrievalEvaluator:
         doc_ids = dataset.doc_ids
         images = dataset.images
         
-        # Create placeholder texts for BM25 (in real scenario, use OCR)
-        texts = [f"Document {doc_id}" for doc_id in doc_ids]
+        # Use query texts as document texts for BM25 indexing
+        # This is valid for ViDoRe where each query corresponds to a document
+        texts = []
+        for doc_id in doc_ids:
+            text = dataset.doc_texts.get(doc_id, f"Document {doc_id}")
+            texts.append(text)
+        
+        logger.info(f"Using query texts for BM25 indexing ({len(texts)} documents)")
         
         # For images that are paths, use them directly
         # For PIL images, we need to save them temporarily
@@ -445,10 +482,15 @@ class RetrievalEvaluator:
             else:
                 image_paths.append("")
         
-        # Index in first stage
-        self.first_stage.index_documents(doc_ids, texts, image_paths)
+        # Index in first stage (BM25 or binary visual)
+        if self.use_visual_first_stage:
+            # For visual first stage, just store image paths (embeddings indexed after encoding)
+            self.first_stage.index_documents(doc_ids, image_paths)
+        else:
+            # For BM25, index with texts
+            self.first_stage.index_documents(doc_ids, texts, image_paths)
         
-        # Encode documents for second stage
+        # Encode documents for second stage (and first stage if using visual)
         logger.info("Encoding document embeddings...")
         start_time = time.time()
         
@@ -466,6 +508,11 @@ class RetrievalEvaluator:
                 device=self.device,
                 show_progress=True,
             )
+        
+        # Refresh binary first stage cache after encoding
+        if self.use_visual_first_stage and self.binary_first_stage is not None:
+            self.binary_first_stage._refresh_cache()
+            logger.info("Binary first stage cache refreshed")
         
         encoding_time = time.time() - start_time
         self._encoding_latencies.append(encoding_time * 1000)  # Convert to ms
@@ -528,8 +575,13 @@ class RetrievalEvaluator:
             # Index documents
             self._index_documents(dataset, batch_size)
             
+            # Get all doc_ids for skip_first_stage mode
+            all_doc_ids = dataset.doc_ids
+            
             # Run retrieval for all queries
             logger.info("Running retrieval evaluation...")
+            if self.skip_first_stage:
+                logger.info("Skipping first stage (BM25), using all documents for MaxSim ranking")
             
             rankings: List[List[str]] = []
             relevant_docs: List[Set[str]] = []
@@ -537,16 +589,21 @@ class RetrievalEvaluator:
             queries = dataset.get_queries()
             
             for query_id, query_text in tqdm(queries, desc="Evaluating"):
-                # First stage retrieval
-                start_time = time.time()
-                first_stage_results = self.first_stage.retrieve(
-                    query_text, 
-                    top_k=self.first_stage_top_k
-                )
-                first_stage_time = (time.time() - start_time) * 1000
-                self._first_stage_latencies.append(first_stage_time)
-                
-                candidate_doc_ids = [doc_id for doc_id, _, _ in first_stage_results]
+                if self.skip_first_stage:
+                    # Skip BM25, use all documents directly
+                    self._first_stage_latencies.append(0.0)
+                    candidate_doc_ids = all_doc_ids
+                else:
+                    # First stage retrieval
+                    start_time = time.time()
+                    first_stage_results = self.first_stage.retrieve(
+                        query_text, 
+                        top_k=self.first_stage_top_k
+                    )
+                    first_stage_time = (time.time() - start_time) * 1000
+                    self._first_stage_latencies.append(first_stage_time)
+                    
+                    candidate_doc_ids = [doc_id for doc_id, _, _ in first_stage_results]
                 
                 # Second stage reranking
                 if candidate_doc_ids:
@@ -605,6 +662,7 @@ class RetrievalEvaluator:
                     "first_stage_top_k": self.first_stage_top_k,
                     "second_stage_top_k": self.second_stage_top_k,
                     "binary_rescore_ratio": self.binary_rescore_ratio,
+                    "skip_first_stage": self.skip_first_stage,
                 },
                 timestamp=datetime.now().isoformat(),
             )
@@ -1171,6 +1229,11 @@ Examples:
         action="store_true",
         help="Disable binary quantization"
     )
+    parser.add_argument(
+        "--skip_first_stage",
+        action="store_true",
+        help="Skip BM25 first stage and use all documents for MaxSim ranking (recommended for evaluation without OCR text)"
+    )
     
     # Output arguments
     parser.add_argument(
@@ -1283,6 +1346,7 @@ def main():
             first_stage_method=args.first_stage_method,
             first_stage_top_k=args.first_stage_top_k,
             second_stage_top_k=args.second_stage_top_k,
+            skip_first_stage=args.skip_first_stage,
         )
         
         # Run evaluation
