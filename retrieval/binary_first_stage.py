@@ -246,7 +246,10 @@ class BinaryFirstStageRetriever:
         top_k: int,
     ) -> List[Tuple[str, float, str]]:
         """
-        Retrieve using full multi-vector binary MaxSim.
+        Retrieve using full multi-vector binary MaxSim (Hamming similarity).
+        
+        For each query token, finds max Hamming similarity with any doc token,
+        then sums across query tokens.
         
         Args:
             query_binary: Binary query (num_tokens, packed_dim) as uint8
@@ -257,16 +260,51 @@ class BinaryFirstStageRetriever:
         """
         scores = []
         
+        # Move query to same device as cache
+        query_binary = query_binary.cpu()
+        n_query = query_binary.shape[0]
+        packed_dim = query_binary.shape[1]
+        dim = packed_dim * 8
+        
+        # Create popcount table for fast bit counting
+        popcount_table = torch.zeros(256, dtype=torch.int32)
+        for i in range(256):
+            popcount_table[i] = bin(i).count('1')
+        
         for doc_id in self.doc_ids:
             if doc_id not in self._binary_cache:
                 scores.append((doc_id, 0.0))
                 continue
             
-            doc_binary = self._binary_cache[doc_id]
+            doc_binary = self._binary_cache[doc_id].cpu()
+            n_doc = doc_binary.shape[0]
             
-            # Compute binary MaxSim
-            score = self.quantizer.binary_maxsim(query_binary, doc_binary)
-            scores.append((doc_id, float(score)))
+            # Compute pairwise Hamming distances using XOR + popcount
+            # query_binary: (n_query, packed_dim)
+            # doc_binary: (n_doc, packed_dim)
+            
+            # Expand for broadcasting
+            query_exp = query_binary.unsqueeze(1)  # (n_query, 1, packed_dim)
+            doc_exp = doc_binary.unsqueeze(0)      # (1, n_doc, packed_dim)
+            
+            # XOR to find differing bits
+            xor_result = query_exp ^ doc_exp  # (n_query, n_doc, packed_dim)
+            
+            # Count bits using lookup table
+            xor_flat = xor_result.reshape(-1).long()
+            bit_counts = popcount_table[xor_flat].reshape(n_query, n_doc, packed_dim)
+            
+            # Sum across packed dimension to get Hamming distance
+            hamming_dist = bit_counts.sum(dim=-1)  # (n_query, n_doc)
+            
+            # Convert to similarity: sim = dim - dist
+            hamming_sim = dim - hamming_dist  # (n_query, n_doc)
+            
+            # MaxSim: for each query token, take max over doc tokens, then sum
+            max_sims = hamming_sim.max(dim=1)[0]  # (n_query,)
+            score = max_sims.sum().item()
+            
+            scores.append((doc_id, score))
         
         # Sort by score descending
         scores.sort(key=lambda x: x[1], reverse=True)

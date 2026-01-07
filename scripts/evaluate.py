@@ -588,11 +588,11 @@ class RetrievalEvaluator:
                         }
                         query_embedding = self.model(**query_inputs)[0]  # (num_tokens, dim)
                     
-                    # Binary first stage retrieval
+                    # Binary first stage retrieval (use multi-vector binary MaxSim)
                     first_stage_results = self.first_stage.retrieve(
                         query_embedding,
                         top_k=self.first_stage_top_k,
-                        use_pooled=True,  # Use pooled for speed
+                        use_pooled=False,  # Use multi-vector binary MaxSim
                     )
                     first_stage_time = (time.time() - start_time) * 1000
                     self._first_stage_latencies.append(first_stage_time)
