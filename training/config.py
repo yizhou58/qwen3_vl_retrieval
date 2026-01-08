@@ -85,7 +85,7 @@ class ColModelTrainingConfig:
         return self.per_device_train_batch_size * self.gradient_accumulation_steps
     
     def to_training_arguments(self) -> dict:
-        return {
+        args = {
             "output_dir": self.output_dir,
             "learning_rate": self.learning_rate,
             "weight_decay": self.weight_decay,
@@ -105,3 +105,6 @@ class ColModelTrainingConfig:
             "dataloader_pin_memory": True,
             "dataloader_prefetch_factor": 2,
         }
+        if self.max_steps > 0:
+            args["max_steps"] = self.max_steps
+        return args
